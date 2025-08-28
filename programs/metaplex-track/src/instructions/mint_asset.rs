@@ -8,8 +8,8 @@ use mpl_core::{
         DataState, 
         PluginAuthorityPair,
         FreezeDelegate,        
-        PluginAuthority, 
-
+        PluginAuthority,
+        BurnDelegate,
     },
 };
 
@@ -36,7 +36,7 @@ pub struct MintAsset<'info> {
 }
 
 impl<'info> MintAsset<'info> {
-    pub fn mint_core_asset(&mut self, bump: MintAssetBumps, freeze_authority: Option<Pubkey>) -> Result<()> {
+    pub fn mint_core_asset(&mut self, bump: MintAssetBumps, freeze_authority: Option<Pubkey>, burn_authority: Option<Pubkey>) -> Result<()> {
         let seeds = &[
             b"authority",
             self.collection.to_account_info().key.as_ref(),
@@ -70,8 +70,18 @@ impl<'info> MintAsset<'info> {
             }),
         };
 
-        // ADD: Combine both plugins into a vector
-        let plugins = vec![attributes_plugin, freeze_plugin];
+        // ADD: Create burn protection plugin
+        let burn_plugin = PluginAuthorityPair {
+            plugin: mpl_core::types::Plugin::BurnDelegate(BurnDelegate {}),
+            authority: Some(PluginAuthority::Address { 
+                address: burn_authority.unwrap_or(self.authority.key())
+                // WHY: Use provided burn_authority or default to collection authority
+                // This determines who can burn the asset - prevents unauthorized burning
+            }),
+        };
+
+        // ADD: Combine all plugins into a vector
+        let plugins = vec![attributes_plugin, freeze_plugin, burn_plugin];
 
 
         CreateV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
