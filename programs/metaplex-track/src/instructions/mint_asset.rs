@@ -6,7 +6,10 @@ use mpl_core::{
         Attribute, 
         Attributes, 
         DataState, 
-        PluginAuthorityPair
+        PluginAuthorityPair,
+        FreezeDelegate,        
+        PluginAuthority, 
+
     },
 };
 
@@ -33,7 +36,7 @@ pub struct MintAsset<'info> {
 }
 
 impl<'info> MintAsset<'info> {
-    pub fn mint_core_asset(&mut self, bump: MintAssetBumps) -> Result<()> {
+    pub fn mint_core_asset(&mut self, bump: MintAssetBumps, freeze_authority: Option<Pubkey>) -> Result<()> {
         let seeds = &[
             b"authority",
             self.collection.to_account_info().key.as_ref(),
@@ -41,6 +44,35 @@ impl<'info> MintAsset<'info> {
         ];
 
         let signer_seeds = &[&seeds[..]];
+
+        // ADD: Create the attributes plugin 
+        let attributes_plugin = PluginAuthorityPair {
+            plugin: mpl_core::types::Plugin::Attributes(Attributes { 
+                attribute_list: vec![
+                    Attribute { 
+                        key: "Ledger".to_string(), 
+                        value: "NFT".to_string() 
+                    }
+                ]
+            }), 
+            authority: None  // No specific authority needed for attributes
+        };
+
+        // ADD: Create the freeze plugin for access control
+        let freeze_plugin = PluginAuthorityPair {
+            plugin: mpl_core::types::Plugin::FreezeDelegate(FreezeDelegate { 
+                frozen: false  // WHY: Start unfrozen so asset can be transferred initially
+            }),
+            authority: Some(PluginAuthority::Address { 
+                address: freeze_authority.unwrap_or(self.authority.key())
+                // WHY: Use provided freeze_authority or default to collection authority
+                // This determines who can freeze/unfreeze the asset
+            }),
+        };
+
+        // ADD: Combine both plugins into a vector
+        let plugins = vec![attributes_plugin, freeze_plugin];
+
 
         CreateV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
             .asset(&self.mint.to_account_info())
@@ -53,17 +85,7 @@ impl<'info> MintAsset<'info> {
             .data_state(DataState::AccountState)
             .name("My Asset".to_string())
             .uri("https://myasset.com".to_string())
-            .plugins(vec![PluginAuthorityPair {
-                plugin: mpl_core::types::Plugin::Attributes(Attributes { attribute_list: 
-                    vec![
-                        Attribute { 
-                            key: "Ledger".to_string(), 
-                            value: "NFT".to_string() 
-                        }
-                    ]
-                }), 
-                authority: None
-            }])
+            .plugins(plugins)  // ADD: Pass the plugins vector here
             .invoke_signed(signer_seeds)?;
         
         Ok(())

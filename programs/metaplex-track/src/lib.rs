@@ -12,8 +12,8 @@ pub mod metaplex_track {
     pub fn create_collection(ctx: Context<MintCollection>) -> Result<()> {
         ctx.accounts.mint_core_collection(ctx.bumps)
     }
-    pub fn mint_asset(ctx: Context<MintAsset>) -> Result<()> {
-        ctx.accounts.mint_core_asset(ctx.bumps)
+    pub fn mint_asset(ctx: Context<MintAsset>, freeze_authority: Option<Pubkey>) -> Result<()> {
+        ctx.accounts.mint_core_asset(ctx.bumps, freeze_authority)
     }
 }
 
