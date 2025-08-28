@@ -94,32 +94,33 @@ it("Request Airdrop", async () => {
     console.log("\nCollection Created! Your transaction signature", tx);
   });
 
-  it("Create an Asset", async () => {
-    const result = await createV1(umi, {
-      asset: asset,
-      name: "My Nft",
-      uri: "https://example.com/my-nft",
-      plugins: [
-        {
-          plugin: createPluginV2({
-            type: "Attributes",
-            attributeList: [
-              {
-                key: "Ledger",
-                value: "Flex",
-              },
-            ],
-          }),
-          authority: pluginAuthority("UpdateAuthority"),
-        },
-      ],
-    }).sendAndConfirm(umi);
+  // This tests works but it uses the metaplex functionality to create an asset and not that of the smart contract
+  // it("Create an Asset", async () => {
+  //   const result = await createV1(umi, {
+  //     asset: asset,
+  //     name: "My Nft",
+  //     uri: "https://example.com/my-nft",
+  //     plugins: [
+  //       {
+  //         plugin: createPluginV2({
+  //           type: "Attributes",
+  //           attributeList: [
+  //             {
+  //               key: "Ledger",
+  //               value: "Flex",
+  //             },
+  //           ],
+  //         }),
+  //         authority: pluginAuthority("UpdateAuthority"),
+  //       },
+  //     ],
+  //   }).sendAndConfirm(umi);
 
-    console.log(
-      "\nAsset minted. Transaction signature: ",
-      base58.deserialize(result.signature)[0]
-    );
-  });
+  //   console.log(
+  //     "\nAsset minted. Transaction signature: ",
+  //     base58.deserialize(result.signature)[0]
+  //   );
+  // });
 
   it("Fetch an Asset", async () => {
     // Wait for 10 seconds before fetching
