@@ -451,15 +451,6 @@ solana account <ACCOUNT_ADDRESS>
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-### Development Guidelines
-- Follow Rust and TypeScript best practices
-- Add comprehensive tests for new features
-- Update documentation for any API changes
-- Ensure all tests pass before submitting
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🔗 Links
 
@@ -468,13 +459,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Metaplex Core**: https://developers.metaplex.com/core
 - **Metaplex Documentation**: https://developers.metaplex.com/
 
-## 📞 Support
-
-For questions, issues, or support:
-- Open an issue on GitHub
-- Join our Discord community
-- Check the documentation
-
----
-
-**SecureNFT** - Empowering creators with advanced NFT access control on Solana 🚀
