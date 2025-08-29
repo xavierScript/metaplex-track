@@ -34,8 +34,6 @@ let keypair = umi.eddsa.createKeypairFromSecretKey(new Uint8Array(wallet));
 const signer = createSignerFromKeypair(umi, keypair);
 umi.use(signerIdentity(signer));
 
-const asset = generateSigner(umi);
-
 describe("metaplex-track", () => {
   // Configure the client to use devnet instead of local cluster
   const connection = new Connection("https://api.devnet.solana.com", "confirmed");
@@ -98,43 +96,6 @@ it("Request Airdrop", async () => {
       .rpc();
 
     console.log("\nCollection Created! Your transaction signature", tx);
-  });
-
-  // This tests works but it uses the metaplex functionality to create an asset and not that of the smart contract
-  // it("Create an Asset", async () => {
-  //   const result = await createV1(umi, {
-  //     asset: asset,
-  //     name: "My Nft",
-  //     uri: "https://example.com/my-nft",
-  //     plugins: [
-  //       {
-  //         plugin: createPluginV2({
-  //           type: "Attributes",
-  //           attributeList: [
-  //             {
-  //               key: "Ledger",
-  //               value: "Flex",
-  //             },
-  //           ],
-  //         }),
-  //         authority: pluginAuthority("UpdateAuthority"),
-  //       },
-  //     ],
-  //   }).sendAndConfirm(umi);
-
-  //   console.log(
-  //     "\nAsset minted. Transaction signature: ",
-  //     base58.deserialize(result.signature)[0]
-  //   );
-  // });
-
-  it("Fetch an Asset", async () => {
-    // Wait for 10 seconds before fetching
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    
-    const fetchedAsset = await fetchAssetV1(umi, asset.publicKey);
-
-    console.log("\nAsset fetched:\n", fetchedAsset);
   });
 
   it("Mint Core Asset", async () => {
