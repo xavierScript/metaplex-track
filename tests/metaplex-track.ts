@@ -664,7 +664,7 @@ it("Request Airdrop", async () => {
       const freezeTx = await program.methods
         .freezeAsset()
         .accountsPartial({
-          user: owner1.publicKey,
+          // user: owner1.publicKey,
           freezeAuthority: freezeAuthority.publicKey,
           asset: freezeTransferAsset.publicKey,
           collection: collection.publicKey,
@@ -707,7 +707,7 @@ it("Request Airdrop", async () => {
       const unfreezeTx = await program.methods
         .unfreezeAsset()
         .accountsPartial({
-          user: owner1.publicKey,
+          // user: owner1.publicKey,
           freezeAuthority: freezeAuthority.publicKey,
           asset: freezeTransferAsset.publicKey,
           collection: collection.publicKey,
