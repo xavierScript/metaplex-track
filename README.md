@@ -265,18 +265,18 @@ metaplex-track/
 └── package.json                     # Node.js dependencies
 ```
 
-### Key Dependencies
 
-**Rust Dependencies:**
-- `anchor-lang` - Solana program framework
-- `anchor-spl` - SPL token integration
-- `mpl-core` - Metaplex Core for NFT standards
+## 📦 Dependencies
 
-**JavaScript Dependencies:**
-- `@coral-xyz/anchor` - Anchor client library
-- `@metaplex-foundation/mpl-core` - Metaplex Core client
-- `@metaplex-foundation/umi` - Metaplex client framework
-- `@solana/web3.js` - Solana JavaScript API
+### Rust (Cargo.toml)
+
+| Package         | Version   | Description                        |
+|-----------------|-----------|------------------------------------|
+| anchor-lang     | 0.31.1    | Solana program framework           |
+| anchor-spl      | 0.31.1    | SPL token integration              |
+| mpl-core        | 0.10.1    | Metaplex Core for NFT standards    |
+
+
 
 ## 🛡️ Security Considerations
 
