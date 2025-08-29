@@ -2,7 +2,6 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { MetaplexTrack } from "../target/types/metaplex_track";
 
-import wallet from "../wallet.json";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import {
   createPluginV2,
@@ -25,6 +24,9 @@ import {
 } from "@metaplex-foundation/umi";
 import { Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { SYSTEM_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/native/system";
+
+// Generate a test wallet instead of importing from file
+const wallet = Keypair.generate().secretKey;
 
 const umi = createUmi("https://api.devnet.solana.com").use(mplCore());
 
