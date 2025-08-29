@@ -24,5 +24,8 @@ pub mod metaplex_track {
     pub fn burn_asset(ctx: Context<BurnAsset>) -> Result<()> {
         ctx.accounts.burn_asset()
     }
+    pub fn transfer_asset(ctx: Context<TransferAsset>) -> Result<()> {
+        ctx.accounts.transfer_asset()
+    }
 }
 

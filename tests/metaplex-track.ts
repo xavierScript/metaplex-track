@@ -57,28 +57,28 @@ describe("metaplex-track", () => {
   // ADD: Generate a burn authority for testing burn protection
   const burnAuthority = Keypair.generate();
 
-// it("Request Airdrop", async () => {
-//     const maxRetries = 3;
-//     let retries = 0;
+it("Request Airdrop", async () => {
+    const maxRetries = 3;
+    let retries = 0;
     
-//     while (retries < maxRetries) {
-//       try {
-//         let airdrop1 = await umi.rpc.airdrop(keypair.publicKey, sol(1));
-//         console.log("Airdrop successful:", airdrop1);
-//         break;
-//       } catch (error) {
-//         retries++;
-//         console.log(`Airdrop attempt ${retries} failed:`, error.message);
+    while (retries < maxRetries) {
+      try {
+        let airdrop1 = await umi.rpc.airdrop(keypair.publicKey, sol(1));
+        console.log("Airdrop successful:", airdrop1);
+        break;
+      } catch (error) {
+        retries++;
+        console.log(`Airdrop attempt ${retries} failed:`, error.message);
         
-//         if (retries < maxRetries) {
-//           console.log(`Retrying in 2 seconds...`);
-//           await new Promise(resolve => setTimeout(resolve, 2000));
-//         } else {
-//           console.log("All airdrop attempts failed, continuing with existing balance");
-//         }
-//       }
-//     }
-//   });
+        if (retries < maxRetries) {
+          console.log(`Retrying in 2 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          console.log("All airdrop attempts failed, continuing with existing balance");
+        }
+      }
+    }
+  });
 
   it("Create a Collection", async () => {
     console.log("\nCollection address: ", collection.publicKey.toBase58());
@@ -562,5 +562,189 @@ describe("metaplex-track", () => {
     }
 
     console.log("\n🛡️ Combined access controls testing completed!");
+  });
+
+  it("Test Basic Transfer Functionality", async () => {
+    console.log("\n=== Testing Basic Transfer Functionality ===");
+    
+    // Generate accounts for testing
+    const originalOwner = provider.wallet; // Use provider wallet as original owner
+    const newOwner = Keypair.generate();
+    const transferTestAsset = Keypair.generate();
+    
+    console.log("Transfer Test Asset:", transferTestAsset.publicKey.toBase58());
+    console.log("Original Owner:", originalOwner.publicKey.toBase58());
+    console.log("New Owner:", newOwner.publicKey.toBase58());
+
+    // Step 1: Mint an asset to transfer
+    console.log("\n1. Minting asset for transfer test...");
+    const mintTx = await program.methods
+      .mintAsset(
+        freezeAuthority.publicKey, // freeze authority
+        burnAuthority.publicKey    // burn authority
+      )
+      .accountsPartial({
+        user: originalOwner.publicKey,
+        mint: transferTestAsset.publicKey,
+        collection: collection.publicKey,
+        authority: authority[0],
+        systemProgram: SYSTEM_PROGRAM_ID,
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+      })
+      .signers([transferTestAsset])
+      .rpc();
+
+    console.log("✅ Asset minted for transfer test, tx:", mintTx);
+
+    // Wait for confirmation
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Step 2: Perform basic transfer (should succeed)
+    console.log("\n2. Testing normal transfer...");
+    try {
+      const transferTx = await program.methods
+        .transferAsset()
+        .accountsPartial({
+          currentOwner: originalOwner.publicKey,
+          newOwner: newOwner.publicKey,
+          asset: transferTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .rpc();
+
+      console.log("✅ Normal transfer succeeded! Tx:", transferTx);
+      console.log(`Asset transferred from ${originalOwner.publicKey.toBase58().slice(0,8)}... to ${newOwner.publicKey.toBase58().slice(0,8)}...`);
+    } catch (error) {
+      console.log("❌ Normal transfer failed:", error.message);
+    }
+
+    console.log("\n📤 Basic transfer testing completed!");
+  });
+
+  it("Test Transfer with Freeze Protection", async () => {
+    console.log("\n=== Testing Transfer + Freeze Interaction ===");
+    
+    // Generate accounts for this test
+    const owner1 = provider.wallet;
+    const owner2 = Keypair.generate();
+    const owner3 = Keypair.generate();
+    const freezeTransferAsset = Keypair.generate();
+    
+    console.log("Freeze Transfer Asset:", freezeTransferAsset.publicKey.toBase58());
+    console.log("Owner 1 (original):", owner1.publicKey.toBase58().slice(0,8) + "...");
+    console.log("Owner 2 (intermediate):", owner2.publicKey.toBase58().slice(0,8) + "...");
+    console.log("Owner 3 (final):", owner3.publicKey.toBase58().slice(0,8) + "...");
+
+    // Step 1: Mint asset
+    console.log("\n1. Minting asset for freeze+transfer test...");
+    const mintTx = await program.methods
+      .mintAsset(
+        freezeAuthority.publicKey, // freeze authority
+        burnAuthority.publicKey    // burn authority
+      )
+      .accountsPartial({
+        user: owner1.publicKey,
+        mint: freezeTransferAsset.publicKey,
+        collection: collection.publicKey,
+        authority: authority[0],
+        systemProgram: SYSTEM_PROGRAM_ID,
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+      })
+      .signers([freezeTransferAsset])
+      .rpc();
+
+    console.log("✅ Asset minted, tx:", mintTx);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Step 2: Freeze the asset
+    console.log("\n2. Freezing the asset...");
+    try {
+      const freezeTx = await program.methods
+        .freezeAsset()
+        .accountsPartial({
+          user: owner1.publicKey,
+          freezeAuthority: freezeAuthority.publicKey,
+          asset: freezeTransferAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([freezeAuthority])
+        .rpc();
+
+      console.log("✅ Asset frozen, tx:", freezeTx);
+    } catch (error) {
+      console.log("❌ Freeze failed:", error.message);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Step 3: Try to transfer frozen asset (should fail)
+    console.log("\n3. Attempting to transfer frozen asset (should fail)...");
+    try {
+      const blockedTransferTx = await program.methods
+        .transferAsset()
+        .accountsPartial({
+          currentOwner: owner1.publicKey,
+          newOwner: owner2.publicKey,
+          asset: freezeTransferAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .rpc();
+
+      console.log("❌ SECURITY ISSUE: Frozen asset transfer succeeded! This should not happen!");
+    } catch (error) {
+      console.log("✅ SECURITY WORKING: Frozen asset transfer properly blocked:", error.message);
+    }
+
+    // Step 4: Unfreeze the asset
+    console.log("\n4. Unfreezing the asset...");
+    try {
+      const unfreezeTx = await program.methods
+        .unfreezeAsset()
+        .accountsPartial({
+          user: owner1.publicKey,
+          freezeAuthority: freezeAuthority.publicKey,
+          asset: freezeTransferAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([freezeAuthority])
+        .rpc();
+
+      console.log("✅ Asset unfrozen, tx:", unfreezeTx);
+    } catch (error) {
+      console.log("❌ Unfreeze failed:", error.message);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Step 5: Transfer unfrozen asset (should succeed)
+    console.log("\n5. Transferring unfrozen asset (should succeed)...");
+    try {
+      const allowedTransferTx = await program.methods
+        .transferAsset()
+        .accountsPartial({
+          currentOwner: owner1.publicKey,
+          newOwner: owner2.publicKey,
+          asset: freezeTransferAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .rpc();
+
+      console.log("✅ Unfrozen asset transfer succeeded! Tx:", allowedTransferTx);
+      console.log("Asset ownership changed successfully");
+    } catch (error) {
+      console.log("❌ Unfrozen asset transfer failed:", error.message);
+    }
+
+    console.log("\n🔄 Transfer + Freeze interaction testing completed!");
   });
 });
