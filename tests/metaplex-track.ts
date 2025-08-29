@@ -1,7 +1,11 @@
+// Test suite for Metaplex Track NFT program
+// Tests collection creation, asset minting, freeze/unfreeze, burn protection, and transfers
+
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { MetaplexTrack } from "../target/types/metaplex_track";
 
+// Metaplex UMI and Core imports for NFT operations
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import {
   createPluginV2,
@@ -25,17 +29,19 @@ import {
 import { Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { SYSTEM_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/native/system";
 
-// Generate a test wallet instead of importing from file
+// Generate a test wallet instead of importing from file for security
 const wallet = Keypair.generate().secretKey;
 
+// Initialize UMI client for Metaplex Core operations
 const umi = createUmi("https://api.devnet.solana.com").use(mplCore());
 
+// Create keypair and signer from test wallet
 let keypair = umi.eddsa.createKeypairFromSecretKey(new Uint8Array(wallet));
 const signer = createSignerFromKeypair(umi, keypair);
 umi.use(signerIdentity(signer));
 
 describe("metaplex-track", () => {
-  // Configure the client to use devnet instead of local cluster
+  // Configure the client to use devnet for testing (not local cluster)
   const connection = new Connection("https://api.devnet.solana.com", "confirmed");
   const anchorWallet = new anchor.Wallet(Keypair.fromSecretKey(new Uint8Array(wallet)));
   const provider = new anchor.AnchorProvider(connection, anchorWallet, {
@@ -43,21 +49,22 @@ describe("metaplex-track", () => {
   });
   anchor.setProvider(provider);
 
+  // Initialize the program instance for testing
   const program = anchor.workspace.MetaplexTrack as Program<MetaplexTrack>;
 
+  // Generate test collection keypair and derive its authority PDA
   const collection = Keypair.generate();
   const authority = anchor.web3.PublicKey.findProgramAddressSync(
     [Buffer.from("authority"), collection.publicKey.toBuffer()],
     program.programId
   );
 
-  // ADD: Generate a freeze authority for testing access control
-  const freezeAuthority = Keypair.generate();
-  
-  // ADD: Generate a burn authority for testing burn protection
-  const burnAuthority = Keypair.generate();
+  // Generate separate authorities for testing access control
+  const freezeAuthority = Keypair.generate(); // Can freeze/unfreeze assets
+  const burnAuthority = Keypair.generate();   // Can burn assets
 
 it("Request Airdrop", async () => {
+    // Request SOL airdrop for test wallet with retry logic
     const maxRetries = 3;
     let retries = 0;
     
@@ -81,56 +88,59 @@ it("Request Airdrop", async () => {
   });
 
   it("Create a Collection", async () => {
+    // Test collection creation using Metaplex Core
     console.log("\nCollection address: ", collection.publicKey.toBase58());
 
     const tx = await program.methods
       .createCollection()
       .accountsPartial({
-        user: provider.publicKey,
-        collection: collection.publicKey,
-        authority: authority[0],
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        user: provider.publicKey,           // User creating and paying for collection
+        collection: collection.publicKey,   // New collection account
+        authority: authority[0],            // PDA that controls the collection
+        systemProgram: SYSTEM_PROGRAM_ID,   // Required for account creation
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID), // Metaplex Core program
       })
-      .signers([collection])
+      .signers([collection]) // Collection keypair signs the transaction
       .rpc();
 
     console.log("\nCollection Created! Your transaction signature", tx);
   });
 
   it("Mint Core Asset", async () => {
+    // Test basic asset minting with freeze and burn authorities
     const assetKeypair = Keypair.generate();
 
     console.log("\nAsset address: ", assetKeypair.publicKey.toBase58());
 
     const tx = await program.methods
       .mintAsset(
-        freezeAuthority.publicKey, // freeze authority parameter
-        freezeAuthority.publicKey  // burn authority parameter (using same for simplicity)
+        freezeAuthority.publicKey, // Authority that can freeze/unfreeze this asset
+        freezeAuthority.publicKey  // Authority that can burn this asset (using same for simplicity)
       )
       .accountsPartial({
-        user: provider.publicKey,
-        mint: assetKeypair.publicKey,
-        collection: collection.publicKey,
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        user: provider.publicKey,              // User minting and paying for asset
+        mint: assetKeypair.publicKey,          // New asset account
+        collection: collection.publicKey,      // Parent collection
+        systemProgram: SYSTEM_PROGRAM_ID,      // Required for account creation
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID), // Metaplex Core program
       })
-      .signers([assetKeypair])
+      .signers([assetKeypair]) // Asset keypair signs the transaction
       .rpc();
 
     console.log("\nYour transaction signature", tx);
   });
 
   it("Test Access Control - Verify Freeze Plugin", async () => {
+    // Test that freeze plugin is correctly attached to minted assets
     console.log("\n=== Testing Access Control (Freeze Plugin) ===");
     
-    // Create a new asset with freeze authority for testing
+    // Create a new asset specifically for plugin verification
     const testAsset = Keypair.generate();
     
     console.log("Test Asset address:", testAsset.publicKey.toBase58());
     console.log("Freeze Authority:", freezeAuthority.publicKey.toBase58());
 
-    // Mint asset with freeze plugin
+    // Mint asset with freeze and burn plugins
     const tx = await program.methods
       .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
       .accountsPartial({
@@ -145,11 +155,11 @@ it("Request Airdrop", async () => {
 
     console.log("Asset minted with freeze plugin, tx:", tx);
 
-    // Wait for transaction confirmation
+    // Wait for transaction confirmation before fetching
     await new Promise(resolve => setTimeout(resolve, 5000));
 
     try {
-      // Fetch the asset and verify freeze plugin exists
+      // Attempt to fetch the asset and verify plugins are attached
       const fetchedAsset = await fetchAssetV1(umi, publicKey(testAsset.publicKey.toBase58()));
       
       console.log("\nFetched Asset Details:");
@@ -157,7 +167,7 @@ it("Request Airdrop", async () => {
       console.log("Asset Name:", fetchedAsset.name);
       console.log("Asset URI:", fetchedAsset.uri);
       
-      // Check if plugins exist (plugins property might not be directly accessible)
+      // Attempt to access plugin information (API may vary)
       console.log("\nAsset object keys:", Object.keys(fetchedAsset));
       
       // Try to access plugins through different property names
@@ -167,6 +177,7 @@ it("Request Airdrop", async () => {
         const plugins = assetData.plugins || [];
         
         if (plugins.length > 0) {
+          // Log details of each plugin found
           plugins.forEach((plugin: any, index: number) => {
             console.log(`Plugin ${index + 1}:`, plugin.__kind || plugin.type);
             if (plugin.__kind === 'FreezeDelegate' || plugin.type === 'FreezeDelegate') {
@@ -206,15 +217,16 @@ it("Request Airdrop", async () => {
   });
 
   it("Test Freeze Asset Functionality", async () => {
+    // Test freezing and unfreezing assets to verify access control
     console.log("\n=== Testing Freeze Asset Functionality ===");
     
-    // Create a new asset for freeze testing
+    // Create a dedicated asset for freeze testing
     const freezeTestAsset = Keypair.generate();
     
     console.log("Freeze Test Asset address:", freezeTestAsset.publicKey.toBase58());
     console.log("Freeze Authority:", freezeAuthority.publicKey.toBase58());
 
-    // Step 1: Mint asset with freeze authority
+    // Step 1: Mint asset with designated freeze authority
     console.log("\n1. Minting asset with freeze authority...");
     const mintTx = await program.methods
       .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
@@ -230,22 +242,22 @@ it("Request Airdrop", async () => {
 
     console.log("Asset minted successfully, tx:", mintTx);
 
-    // Wait for confirmation
+    // Wait for transaction confirmation before proceeding
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Step 2: Freeze the asset
+    // Step 2: Test freezing the asset (should succeed)
     console.log("\n2. Freezing the asset...");
     try {
       const freezeTx = await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey,
+          freezeAuthority: freezeAuthority.publicKey, // Only freeze authority can freeze
           asset: freezeTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
           mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
         })
-        .signers([freezeAuthority])
+        .signers([freezeAuthority]) // Must be signed by freeze authority
         .rpc();
 
       console.log("✅ Asset frozen successfully! Tx:", freezeTx);
@@ -254,22 +266,22 @@ it("Request Airdrop", async () => {
       // Don't fail the test immediately, continue to unfreeze test
     }
 
-    // Wait for confirmation
+    // Wait for confirmation before next operation
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Step 3: Unfreeze the asset
+    // Step 3: Test unfreezing the asset (should succeed)
     console.log("\n3. Unfreezing the asset...");
     try {
       const unfreezeTx = await program.methods
         .unfreezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey,
+          freezeAuthority: freezeAuthority.publicKey, // Only freeze authority can unfreeze
           asset: freezeTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
           mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
         })
-        .signers([freezeAuthority])
+        .signers([freezeAuthority]) // Must be signed by freeze authority
         .rpc();
 
       console.log("✅ Asset unfrozen successfully! Tx:", unfreezeTx);
@@ -281,9 +293,10 @@ it("Request Airdrop", async () => {
   });
 
   it("Test Freeze Authority Access Control", async () => {
+    // Test that only designated freeze authority can freeze/unfreeze assets
     console.log("\n=== Testing Freeze Authority Access Control ===");
     
-    // Create another asset and unauthorized keypair
+    // Create test asset and unauthorized keypair to test access control
     const accessTestAsset = Keypair.generate();
     const unauthorizedAuthority = Keypair.generate();
     
@@ -291,7 +304,7 @@ it("Request Airdrop", async () => {
     console.log("Unauthorized Authority:", unauthorizedAuthority.publicKey.toBase58());
     console.log("Authorized Freeze Authority:", freezeAuthority.publicKey.toBase58());
 
-    // Step 1: Mint asset with freeze authority
+    // Step 1: Mint asset with designated freeze authority
     console.log("\n1. Minting asset...");
     const mintTx = await program.methods
       .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
@@ -308,19 +321,19 @@ it("Request Airdrop", async () => {
     console.log("Asset minted, tx:", mintTx);
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Step 2: Try to freeze with unauthorized authority (should fail)
+    // Step 2: Attempt freeze with unauthorized authority (should fail)
     console.log("\n2. Testing unauthorized freeze attempt...");
     try {
       await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: unauthorizedAuthority.publicKey,
+          freezeAuthority: unauthorizedAuthority.publicKey, // Wrong authority
           asset: accessTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
           mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
         })
-        .signers([unauthorizedAuthority])
+        .signers([unauthorizedAuthority]) // Unauthorized signer
         .rpc();
 
       console.log("❌ SECURITY ISSUE: Unauthorized freeze succeeded! This should not happen!");
@@ -334,13 +347,13 @@ it("Request Airdrop", async () => {
       const authorizedFreezeTx = await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey,
+          freezeAuthority: freezeAuthority.publicKey, // Correct authority
           asset: accessTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
           mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
         })
-        .signers([freezeAuthority])
+        .signers([freezeAuthority]) // Authorized signer
         .rpc();
 
       console.log("✅ Authorized freeze succeeded! Tx:", authorizedFreezeTx);
@@ -352,23 +365,24 @@ it("Request Airdrop", async () => {
   });
 
   it("Test Burn Protection - Verify Burn Plugin & Control", async () => {
+    // Test burn protection functionality and access control
     console.log("\n=== Testing Burn Protection (Burn Plugin) ===");
     
-    // Generate a separate burn authority for testing
+    // Generate separate authorities for this test
     const burnAuthority = Keypair.generate();
     const unauthorizedUser = Keypair.generate();
     
     console.log("Burn Authority:", burnAuthority.publicKey.toBase58());
     console.log("Unauthorized User:", unauthorizedUser.publicKey.toBase58());
 
-    // Step 1: Mint asset with burn protection
+    // Step 1: Mint asset with burn protection enabled
     console.log("\n1. Minting asset with burn protection...");
     const burnTestAsset = Keypair.generate();
     
     const mintTx = await program.methods
       .mintAsset(
         freezeAuthority.publicKey, // freeze authority
-        burnAuthority.publicKey    // burn authority (NEW!)
+        burnAuthority.publicKey    // burn authority (important: separate authority)
       )
       .accountsPartial({
         user: provider.publicKey,
@@ -384,16 +398,16 @@ it("Request Airdrop", async () => {
     console.log("✅ Asset minted with burn protection! Tx:", mintTx);
     console.log("Asset address:", burnTestAsset.publicKey.toBase58());
 
-    // Wait for confirmation
+    // Wait for transaction confirmation
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Step 2: Try to burn with unauthorized user (should fail)
+    // Step 2: Attempt burn with unauthorized user (should fail for security)
     console.log("\n2. Testing unauthorized burn (should fail)...");
     try {
       const unauthorizedBurnTx = await program.methods
         .burnAsset()
         .accountsPartial({
-          burnAuthority: unauthorizedUser.publicKey,
+          burnAuthority: unauthorizedUser.publicKey, // Wrong authority
           asset: burnTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
@@ -528,18 +542,19 @@ it("Request Airdrop", async () => {
   });
 
   it("Test Basic Transfer Functionality", async () => {
+    // Test normal asset transfer between owners
     console.log("\n=== Testing Basic Transfer Functionality ===");
     
-    // Generate accounts for testing
+    // Set up accounts for transfer testing
     const originalOwner = provider.wallet; // Use provider wallet as original owner
-    const newOwner = Keypair.generate();
+    const newOwner = Keypair.generate();   // Generate recipient
     const transferTestAsset = Keypair.generate();
     
     console.log("Transfer Test Asset:", transferTestAsset.publicKey.toBase58());
     console.log("Original Owner:", originalOwner.publicKey.toBase58());
     console.log("New Owner:", newOwner.publicKey.toBase58());
 
-    // Step 1: Mint an asset to transfer
+    // Step 1: Mint an asset that can be transferred
     console.log("\n1. Minting asset for transfer test...");
     const mintTx = await program.methods
       .mintAsset(
@@ -547,7 +562,7 @@ it("Request Airdrop", async () => {
         burnAuthority.publicKey    // burn authority
       )
       .accountsPartial({
-        user: originalOwner.publicKey,
+        user: originalOwner.publicKey,     // Original owner mints the asset
         mint: transferTestAsset.publicKey,
         collection: collection.publicKey,
         authority: authority[0],
@@ -559,23 +574,23 @@ it("Request Airdrop", async () => {
 
     console.log("✅ Asset minted for transfer test, tx:", mintTx);
 
-    // Wait for confirmation
+    // Wait for confirmation before attempting transfer
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Step 2: Perform basic transfer (should succeed)
+    // Step 2: Execute normal transfer (should succeed if asset is not frozen)
     console.log("\n2. Testing normal transfer...");
     try {
       const transferTx = await program.methods
         .transferAsset()
         .accountsPartial({
-          currentOwner: originalOwner.publicKey,
-          newOwner: newOwner.publicKey,
+          currentOwner: originalOwner.publicKey, // Must be current owner
+          newOwner: newOwner.publicKey,          // Recipient
           asset: transferTestAsset.publicKey,
           collection: collection.publicKey,
           systemProgram: SYSTEM_PROGRAM_ID,
           mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
         })
-        .rpc();
+        .rpc(); // Provider wallet automatically signs
 
       console.log("✅ Normal transfer succeeded! Tx:", transferTx);
       console.log(`Asset transferred from ${originalOwner.publicKey.toBase58().slice(0,8)}... to ${newOwner.publicKey.toBase58().slice(0,8)}...`);
@@ -587,9 +602,10 @@ it("Request Airdrop", async () => {
   });
 
   it("Test Transfer with Freeze Protection", async () => {
+    // Test that frozen assets cannot be transferred (security feature)
     console.log("\n=== Testing Transfer + Freeze Interaction ===");
     
-    // Generate accounts for this test
+    // Generate accounts for comprehensive freeze+transfer testing
     const owner1 = provider.wallet;
     const owner2 = Keypair.generate();
     const owner3 = Keypair.generate();
@@ -600,7 +616,7 @@ it("Request Airdrop", async () => {
     console.log("Owner 2 (intermediate):", owner2.publicKey.toBase58().slice(0,8) + "...");
     console.log("Owner 3 (final):", owner3.publicKey.toBase58().slice(0,8) + "...");
 
-    // Step 1: Mint asset
+    // Step 1: Mint asset for freeze+transfer interaction testing
     console.log("\n1. Minting asset for freeze+transfer test...");
     const mintTx = await program.methods
       .mintAsset(
@@ -621,13 +637,12 @@ it("Request Airdrop", async () => {
     console.log("✅ Asset minted, tx:", mintTx);
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Step 2: Freeze the asset
+    // Step 2: Freeze the asset to test transfer blocking
     console.log("\n2. Freezing the asset...");
     try {
       const freezeTx = await program.methods
         .freezeAsset()
         .accountsPartial({
-          // user: owner1.publicKey,
           freezeAuthority: freezeAuthority.publicKey,
           asset: freezeTransferAsset.publicKey,
           collection: collection.publicKey,
@@ -644,7 +659,7 @@ it("Request Airdrop", async () => {
 
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Step 3: Try to transfer frozen asset (should fail)
+    // Step 3: Attempt transfer of frozen asset (should fail for security)
     console.log("\n3. Attempting to transfer frozen asset (should fail)...");
     try {
       const blockedTransferTx = await program.methods
@@ -664,13 +679,12 @@ it("Request Airdrop", async () => {
       console.log("✅ SECURITY WORKING: Frozen asset transfer properly blocked:", error.message);
     }
 
-    // Step 4: Unfreeze the asset
+    // Step 4: Unfreeze the asset to allow transfers again
     console.log("\n4. Unfreezing the asset...");
     try {
       const unfreezeTx = await program.methods
         .unfreezeAsset()
         .accountsPartial({
-          // user: owner1.publicKey,
           freezeAuthority: freezeAuthority.publicKey,
           asset: freezeTransferAsset.publicKey,
           collection: collection.publicKey,
@@ -687,7 +701,7 @@ it("Request Airdrop", async () => {
 
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Step 5: Transfer unfrozen asset (should succeed)
+    // Step 5: Transfer unfrozen asset (should now succeed)
     console.log("\n5. Transferring unfrozen asset (should succeed)...");
     try {
       const allowedTransferTx = await program.methods
