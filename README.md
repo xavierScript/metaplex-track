@@ -22,6 +22,81 @@
 
 ## 🏗️ Architecture
 
+### System Overview
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        A[Web3 DApp] --> B[Anchor Client]
+        C[CLI Tools] --> B
+        D[Test Suite] --> B
+    end
+
+    subgraph "Solana Runtime"
+        B --> E[SecureNFT Program]
+        E --> F[Metaplex Core Program]
+        E --> G[System Program]
+    end
+
+    subgraph "On-Chain Data"
+        F --> H[Collection Account]
+        F --> I[Asset Account]
+        F --> J[Plugin Data]
+    end
+
+    subgraph "Plugin System"
+        J --> K[Attributes Plugin]
+        J --> L[Freeze Delegate Plugin]
+        J --> M[Burn Delegate Plugin]
+    end
+
+    style E fill:#ff6b6b
+    style F fill:#4ecdc4
+    style H fill:#45b7d1
+    style I fill:#45b7d1
+    style K fill:#96ceb4
+    style L fill:#feca57
+    style M fill:#ff9ff3
+```
+
+### Data Flow Architecture
+
+```mermaid
+sequenceDiagram
+    participant U as User/Client
+    participant SC as SecureNFT Contract
+    participant MC as Metaplex Core
+    participant SOL as Solana Runtime
+
+    Note over U,SOL: Collection Creation Flow
+    U->>SC: create_collection()
+    SC->>MC: create_collection_v1()
+    MC->>SOL: Create Collection Account
+    SOL-->>MC: Collection Created
+    MC-->>SC: Success
+    SC-->>U: Collection Address
+
+    Note over U,SOL: Asset Minting Flow
+    U->>SC: mint_asset(freeze_auth, burn_auth)
+    SC->>MC: create_asset_v1()
+    SC->>MC: add_plugin_v1(Attributes)
+    SC->>MC: add_plugin_v1(FreezeDelegate)
+    SC->>MC: add_plugin_v1(BurnDelegate)
+    MC->>SOL: Create Asset + Plugins
+    SOL-->>MC: Asset Created
+    MC-->>SC: Success
+    SC-->>U: Asset Address
+
+    Note over U,SOL: Access Control Flow
+    U->>SC: freeze_asset()
+    SC->>SC: Validate Authority
+    SC->>MC: update_plugin_v1(FreezeDelegate)
+    MC->>SOL: Update Plugin State
+    SOL-->>MC: State Updated
+    MC-->>SC: Success
+    SC-->>U: Asset Frozen
+```
+
 ### Smart Contract Structure
 ```
 SecureNFT Contract
@@ -34,6 +109,47 @@ SecureNFT Contract
     ├── freeze_asset() - Lock assets from transfers
     ├── unfreeze_asset() - Unlock assets for transfers
     └── burn_asset() - Destroy assets (authorized only)
+```
+
+### Authority & Permission Model
+
+```mermaid
+graph LR
+    subgraph "Authority Hierarchy"
+        A[Collection Authority] --> B[Asset Owner]
+        A --> C[Freeze Authority]
+        A --> D[Burn Authority]
+    end
+
+    subgraph "Permissions"
+        B --> E[Transfer Assets]
+        B --> F[Update Metadata]
+        C --> G[Freeze/Unfreeze]
+        D --> H[Burn Assets]
+    end
+
+    subgraph "Security Checks"
+        E --> I{Asset Frozen?}
+        G --> J{Valid Authority?}
+        H --> K{Valid Authority?}
+    end
+
+    I -->|No| L[Allow Transfer]
+    I -->|Yes| M[Reject Transfer]
+    J -->|Yes| N[Allow Operation]
+    J -->|No| O[Reject Operation]
+    K -->|Yes| P[Allow Burn]
+    K -->|No| Q[Reject Burn]
+
+    style A fill:#ff6b6b
+    style C fill:#feca57
+    style D fill:#ff9ff3
+    style L fill:#96ceb4
+    style N fill:#96ceb4
+    style P fill:#96ceb4
+    style M fill:#f85359
+    style O fill:#f85359
+    style Q fill:#f85359
 ```
 
 ### Key Components
