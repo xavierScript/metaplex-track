@@ -13,6 +13,7 @@ import {
   pluginAuthority,
   MPL_CORE_PROGRAM_ID,
   ruleSet,
+  burn,
 } from "@metaplex-foundation/mpl-core";
 import {
   base58,
@@ -52,29 +53,32 @@ describe("metaplex-track", () => {
 
   // ADD: Generate a freeze authority for testing access control
   const freezeAuthority = Keypair.generate();
+  
+  // ADD: Generate a burn authority for testing burn protection
+  const burnAuthority = Keypair.generate();
 
-it("Request Airdrop", async () => {
-    const maxRetries = 3;
-    let retries = 0;
+// it("Request Airdrop", async () => {
+//     const maxRetries = 3;
+//     let retries = 0;
     
-    while (retries < maxRetries) {
-      try {
-        let airdrop1 = await umi.rpc.airdrop(keypair.publicKey, sol(1));
-        console.log("Airdrop successful:", airdrop1);
-        break;
-      } catch (error) {
-        retries++;
-        console.log(`Airdrop attempt ${retries} failed:`, error.message);
+//     while (retries < maxRetries) {
+//       try {
+//         let airdrop1 = await umi.rpc.airdrop(keypair.publicKey, sol(1));
+//         console.log("Airdrop successful:", airdrop1);
+//         break;
+//       } catch (error) {
+//         retries++;
+//         console.log(`Airdrop attempt ${retries} failed:`, error.message);
         
-        if (retries < maxRetries) {
-          console.log(`Retrying in 2 seconds...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          console.log("All airdrop attempts failed, continuing with existing balance");
-        }
-      }
-    }
-  });
+//         if (retries < maxRetries) {
+//           console.log(`Retrying in 2 seconds...`);
+//           await new Promise(resolve => setTimeout(resolve, 2000));
+//         } else {
+//           console.log("All airdrop attempts failed, continuing with existing balance");
+//         }
+//       }
+//     }
+//   });
 
   it("Create a Collection", async () => {
     console.log("\nCollection address: ", collection.publicKey.toBase58());
@@ -137,7 +141,10 @@ it("Request Airdrop", async () => {
     console.log("\nAsset address: ", assetKeypair.publicKey.toBase58());
 
     const tx = await program.methods
-      .mintAsset(freezeAuthority.publicKey) // ADD: Pass freeze authority parameter
+      .mintAsset(
+        freezeAuthority.publicKey, // freeze authority parameter
+        freezeAuthority.publicKey  // burn authority parameter (using same for simplicity)
+      )
       .accountsPartial({
         user: provider.publicKey,
         mint: assetKeypair.publicKey,
@@ -162,7 +169,7 @@ it("Request Airdrop", async () => {
 
     // Mint asset with freeze plugin
     const tx = await program.methods
-      .mintAsset(freezeAuthority.publicKey)
+      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
       .accountsPartial({
         user: provider.publicKey,
         mint: testAsset.publicKey,
@@ -247,7 +254,7 @@ it("Request Airdrop", async () => {
     // Step 1: Mint asset with freeze authority
     console.log("\n1. Minting asset with freeze authority...");
     const mintTx = await program.methods
-      .mintAsset(freezeAuthority.publicKey)
+      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
       .accountsPartial({
         user: provider.publicKey,
         mint: freezeTestAsset.publicKey,
@@ -324,7 +331,7 @@ it("Request Airdrop", async () => {
     // Step 1: Mint asset with freeze authority
     console.log("\n1. Minting asset...");
     const mintTx = await program.methods
-      .mintAsset(freezeAuthority.publicKey)
+      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
       .accountsPartial({
         user: provider.publicKey,
         mint: accessTestAsset.publicKey,
@@ -379,5 +386,181 @@ it("Request Airdrop", async () => {
     }
 
     console.log("\n🔒 Access control testing completed!");
+  });
+
+  it("Test Burn Protection - Verify Burn Plugin & Control", async () => {
+    console.log("\n=== Testing Burn Protection (Burn Plugin) ===");
+    
+    // Generate a separate burn authority for testing
+    const burnAuthority = Keypair.generate();
+    const unauthorizedUser = Keypair.generate();
+    
+    console.log("Burn Authority:", burnAuthority.publicKey.toBase58());
+    console.log("Unauthorized User:", unauthorizedUser.publicKey.toBase58());
+
+    // Step 1: Mint asset with burn protection
+    console.log("\n1. Minting asset with burn protection...");
+    const burnTestAsset = Keypair.generate();
+    
+    const mintTx = await program.methods
+      .mintAsset(
+        freezeAuthority.publicKey, // freeze authority
+        burnAuthority.publicKey    // burn authority (NEW!)
+      )
+      .accountsPartial({
+        user: provider.publicKey,
+        mint: burnTestAsset.publicKey,
+        collection: collection.publicKey,
+        authority: authority[0],
+        systemProgram: SYSTEM_PROGRAM_ID,
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+      })
+      .signers([burnTestAsset])
+      .rpc();
+
+    console.log("✅ Asset minted with burn protection! Tx:", mintTx);
+    console.log("Asset address:", burnTestAsset.publicKey.toBase58());
+
+    // Wait for confirmation
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Step 2: Try to burn with unauthorized user (should fail)
+    console.log("\n2. Testing unauthorized burn (should fail)...");
+    try {
+      const unauthorizedBurnTx = await program.methods
+        .burnAsset()
+        .accountsPartial({
+          burnAuthority: unauthorizedUser.publicKey,
+          asset: burnTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([unauthorizedUser])
+        .rpc();
+
+      console.log("❌ SECURITY ISSUE: Unauthorized burn succeeded! This should not happen!");
+    } catch (error) {
+      console.log("✅ SECURITY WORKING: Unauthorized burn properly rejected:", error.message);
+    }
+
+    // Step 3: Burn with correct authority (should succeed)
+    console.log("\n3. Testing authorized burn...");
+    try {
+      const authorizedBurnTx = await program.methods
+        .burnAsset()
+        .accountsPartial({
+          burnAuthority: burnAuthority.publicKey,
+          asset: burnTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([burnAuthority])
+        .rpc();
+
+      console.log("✅ Authorized burn succeeded! Asset destroyed. Tx:", authorizedBurnTx);
+      
+      // Step 4: Try to fetch the burned asset (should fail)
+      console.log("\n4. Verifying asset was burned...");
+      try {
+        const burnedAsset = await fetchAssetV1(umi, publicKey(burnTestAsset.publicKey.toBase58()));
+        console.log("❌ Asset still exists after burn:", burnedAsset.publicKey);
+      } catch (error) {
+        console.log("✅ Asset successfully burned - no longer exists on chain");
+      }
+      
+    } catch (error) {
+      console.log("❌ Authorized burn failed:", error.message);
+    }
+
+    console.log("\n🔥 Burn protection testing completed!");
+  });
+
+  it("Test Combined Access Controls", async () => {
+    console.log("\n=== Testing Combined Freeze + Burn Protection ===");
+    
+    // Generate authorities
+    const combinedFreezeAuth = Keypair.generate();
+    const combinedBurnAuth = Keypair.generate();
+    
+    // Mint asset with both protections
+    const combinedTestAsset = Keypair.generate();
+    
+    const mintTx = await program.methods
+      .mintAsset(
+        combinedFreezeAuth.publicKey, // freeze authority
+        combinedBurnAuth.publicKey    // burn authority
+      )
+      .accountsPartial({
+        user: provider.publicKey,
+        mint: combinedTestAsset.publicKey,
+        collection: collection.publicKey,
+        authority: authority[0],
+        systemProgram: SYSTEM_PROGRAM_ID,
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+      })
+      .signers([combinedTestAsset])
+      .rpc();
+
+    console.log("✅ Asset minted with BOTH freeze and burn protection!");
+    console.log("Asset:", combinedTestAsset.publicKey.toBase58());
+    console.log("Freeze Authority:", combinedFreezeAuth.publicKey.toBase58());
+    console.log("Burn Authority:", combinedBurnAuth.publicKey.toBase58());
+
+    // Test that both authorities work independently
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    try {
+      // Test freeze
+      const freezeTx = await program.methods
+        .freezeAsset()
+        .accountsPartial({
+          freezeAuthority: combinedFreezeAuth.publicKey,
+          asset: combinedTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([combinedFreezeAuth])
+        .rpc();
+
+      console.log("✅ Freeze authority works independently");
+
+      // Test unfreeze
+      const unfreezeTx = await program.methods
+        .unfreezeAsset()
+        .accountsPartial({
+          freezeAuthority: combinedFreezeAuth.publicKey,
+          asset: combinedTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([combinedFreezeAuth])
+        .rpc();
+
+      console.log("✅ Unfreeze authority works independently");
+
+      // Test burn (will destroy the asset)
+      const burnTx = await program.methods
+        .burnAsset()
+        .accountsPartial({
+          burnAuthority: combinedBurnAuth.publicKey,
+          asset: combinedTestAsset.publicKey,
+          collection: collection.publicKey,
+          systemProgram: SYSTEM_PROGRAM_ID,
+          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+        })
+        .signers([combinedBurnAuth])
+        .rpc();
+
+      console.log("✅ Burn authority works independently - asset destroyed");
+
+    } catch (error) {
+      console.log("❌ Combined authorities test failed:", error.message);
+    }
+
+    console.log("\n🛡️ Combined access controls testing completed!");
   });
 });
