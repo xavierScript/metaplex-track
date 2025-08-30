@@ -29,11 +29,21 @@ import {
 import { Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { SYSTEM_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/native/system";
 
+// Test configuration constants
+const TEST_CONFIG = {
+  RPC_URL: "https://api.devnet.solana.com",
+  COMMITMENT: "confirmed" as const,
+  AIRDROP_AMOUNT: sol(1),
+  MAX_RETRIES: 3,
+  RETRY_DELAY: 2000,
+  TX_CONFIRMATION_DELAY: 3000,
+} as const;
+
 // Generate a test wallet instead of importing from file for security
 const wallet = Keypair.generate().secretKey;
 
 // Initialize UMI client for Metaplex Core operations
-const umi = createUmi("https://api.devnet.solana.com").use(mplCore());
+const umi = createUmi(TEST_CONFIG.RPC_URL).use(mplCore());
 
 // Create keypair and signer from test wallet
 let keypair = umi.eddsa.createKeypairFromSecretKey(new Uint8Array(wallet));
@@ -42,10 +52,10 @@ umi.use(signerIdentity(signer));
 
 describe("metaplex-track", () => {
   // Configure the client to use devnet for testing (not local cluster)
-  const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+  const connection = new Connection(TEST_CONFIG.RPC_URL, TEST_CONFIG.COMMITMENT);
   const anchorWallet = new anchor.Wallet(Keypair.fromSecretKey(new Uint8Array(wallet)));
   const provider = new anchor.AnchorProvider(connection, anchorWallet, {
-    commitment: "confirmed",
+    commitment: TEST_CONFIG.COMMITMENT,
   });
   anchor.setProvider(provider);
 
@@ -63,20 +73,49 @@ describe("metaplex-track", () => {
   const freezeAuthority = Keypair.generate(); // Can freeze/unfreeze assets
   const burnAuthority = Keypair.generate();   // Can burn assets
 
+  // Helper function to wait for transaction confirmation
+  const waitForConfirmation = (delay: number = TEST_CONFIG.TX_CONFIRMATION_DELAY) => 
+    new Promise(resolve => setTimeout(resolve, delay));
+
+  // Helper function to create common account structure for Metaplex operations
+  const getMetaplexAccounts = (asset: PublicKey, additionalAccounts = {}) => ({
+    collection: collection.publicKey,
+    systemProgram: SYSTEM_PROGRAM_ID,
+    mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+    asset,
+    ...additionalAccounts,
+  });
+
+  // Helper function to mint a test asset with specified authorities
+  const mintTestAsset = async (freezeAuth: PublicKey, burnAuth: PublicKey) => {
+    const assetKeypair = Keypair.generate();
+    
+    const tx = await program.methods
+      .mintAsset(freezeAuth, burnAuth)
+      .accountsPartial({
+        user: provider.publicKey,
+        mint: assetKeypair.publicKey,
+        ...getMetaplexAccounts(assetKeypair.publicKey),
+      })
+      .signers([assetKeypair])
+      .rpc();
+
+    return { assetKeypair, tx };
+  };
+
 it("Request Airdrop", async () => {
     // Request SOL airdrop for test wallet with retry logic
-    const maxRetries = 3;
     let retries = 0;
     
-    while (retries < maxRetries) {
+    while (retries < TEST_CONFIG.MAX_RETRIES) {
       try {
-        let airdrop1 = await umi.rpc.airdrop(keypair.publicKey, sol(1));
+        await umi.rpc.airdrop(keypair.publicKey, TEST_CONFIG.AIRDROP_AMOUNT);
         break;
       } catch (error) {
         retries++;
         
-        if (retries < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        if (retries < TEST_CONFIG.MAX_RETRIES) {
+          await new Promise(resolve => setTimeout(resolve, TEST_CONFIG.RETRY_DELAY));
         }
       }
     }
@@ -84,75 +123,41 @@ it("Request Airdrop", async () => {
 
   it("Create a Collection", async () => {
     // Test collection creation using Metaplex Core
-
-    const tx = await program.methods
+    await program.methods
       .createCollection()
       .accountsPartial({
-        user: provider.publicKey,           // User creating and paying for collection
-        collection: collection.publicKey,   // New collection account
-        authority: authority[0],            // PDA that controls the collection
-        systemProgram: SYSTEM_PROGRAM_ID,   // Required for account creation
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID), // Metaplex Core program
+        user: provider.publicKey,
+        collection: collection.publicKey,
+        authority: authority[0],
+        systemProgram: SYSTEM_PROGRAM_ID,
+        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
       })
-      .signers([collection]) // Collection keypair signs the transaction
+      .signers([collection])
       .rpc();
-
   });
 
   it("Mint Core Asset", async () => {
     // Test basic asset minting with freeze and burn authorities
-    const assetKeypair = Keypair.generate();
-
-    const tx = await program.methods
-      .mintAsset(
-        freezeAuthority.publicKey, // Authority that can freeze/unfreeze this asset
-        freezeAuthority.publicKey  // Authority that can burn this asset (using same for simplicity)
-      )
-      .accountsPartial({
-        user: provider.publicKey,              // User minting and paying for asset
-        mint: assetKeypair.publicKey,          // New asset account
-        collection: collection.publicKey,      // Parent collection
-        systemProgram: SYSTEM_PROGRAM_ID,      // Required for account creation
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID), // Metaplex Core program
-      })
-      .signers([assetKeypair]) // Asset keypair signs the transaction
-      .rpc();
-
+    await mintTestAsset(freezeAuthority.publicKey, freezeAuthority.publicKey);
   });
 
   it("Test Access Control - Verify Freeze Plugin", async () => {
     // Test that freeze plugin is correctly attached to minted assets
-    
-    // Create a new asset specifically for plugin verification
-    const testAsset = Keypair.generate();
-
-    // Mint asset with freeze and burn plugins
-    const tx = await program.methods
-      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
-      .accountsPartial({
-        user: provider.publicKey,
-        mint: testAsset.publicKey,
-        collection: collection.publicKey,
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([testAsset])
-      .rpc();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, burnAuthority.publicKey);
 
     // Wait for transaction confirmation before fetching
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await waitForConfirmation(5000);
 
     try {
       // Attempt to fetch the asset and verify plugins are attached
-      const fetchedAsset = await fetchAssetV1(umi, publicKey(testAsset.publicKey.toBase58()));
+      const fetchedAsset = await fetchAssetV1(umi, publicKey(assetKeypair.publicKey.toBase58()));
       
-      // Try to access plugins through different property names
+      // Verify plugins are attached correctly
       const assetData = fetchedAsset as any;
       if (assetData.plugins || assetData.pluginHeader) {
         const plugins = assetData.plugins || [];
         
         if (plugins.length > 0) {
-          // Verify freeze plugin exists
           const freezePlugin = plugins.find(
             (plugin: any) => plugin.__kind === 'FreezeDelegate' || plugin.type === 'FreezeDelegate'
           );
@@ -172,166 +177,97 @@ it("Request Airdrop", async () => {
 
   it("Test Freeze Asset Functionality", async () => {
     // Test freezing and unfreezing assets to verify access control
-    
-    // Create a dedicated asset for freeze testing
-    const freezeTestAsset = Keypair.generate();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, burnAuthority.publicKey);
 
-    // Step 1: Mint asset with designated freeze authority
-    const mintTx = await program.methods
-      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
-      .accountsPartial({
-        user: provider.publicKey,
-        mint: freezeTestAsset.publicKey,
-        collection: collection.publicKey,
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([freezeTestAsset])
-      .rpc();
+    await waitForConfirmation();
 
-    // Wait for transaction confirmation before proceeding
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Step 2: Test freezing the asset (should succeed)
+    // Test freezing the asset
     try {
-      const freezeTx = await program.methods
+      await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey, // Only freeze authority can freeze
-          asset: freezeTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          freezeAuthority: freezeAuthority.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .signers([freezeAuthority]) // Must be signed by freeze authority
+        .signers([freezeAuthority])
         .rpc();
 
     } catch (error) {
-      // Don't fail the test immediately, continue to unfreeze test
+      // Handle error silently for now
     }
 
-    // Wait for confirmation before next operation
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await waitForConfirmation();
 
-    // Step 3: Test unfreezing the asset (should succeed)
+    // Test unfreezing the asset
     try {
-      const unfreezeTx = await program.methods
+      await program.methods
         .unfreezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey, // Only freeze authority can unfreeze
-          asset: freezeTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          freezeAuthority: freezeAuthority.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .signers([freezeAuthority]) // Must be signed by freeze authority
+        .signers([freezeAuthority])
         .rpc();
 
     } catch (error) {
       // Handle error silently
     }
-
   });
 
   it("Test Freeze Authority Access Control", async () => {
     // Test that only designated freeze authority can freeze/unfreeze assets
-    
-    // Create test asset and unauthorized keypair to test access control
-    const accessTestAsset = Keypair.generate();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, burnAuthority.publicKey);
     const unauthorizedAuthority = Keypair.generate();
 
-    // Step 1: Mint asset with designated freeze authority
-    const mintTx = await program.methods
-      .mintAsset(freezeAuthority.publicKey, burnAuthority.publicKey)
-      .accountsPartial({
-        user: provider.publicKey,
-        mint: accessTestAsset.publicKey,
-        collection: collection.publicKey,
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([accessTestAsset])
-      .rpc();
+    await waitForConfirmation();
 
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Step 2: Attempt freeze with unauthorized authority (should fail)
+    // Attempt freeze with unauthorized authority (should fail)
     try {
       await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: unauthorizedAuthority.publicKey, // Wrong authority
-          asset: accessTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          freezeAuthority: unauthorizedAuthority.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .signers([unauthorizedAuthority]) // Unauthorized signer
+        .signers([unauthorizedAuthority])
         .rpc();
 
     } catch (error) {
       // Expected to fail - unauthorized access properly rejected
     }
 
-    // Step 3: Freeze with correct authority (should succeed)
+    // Freeze with correct authority (should succeed)
     try {
-      const authorizedFreezeTx = await program.methods
+      await program.methods
         .freezeAsset()
         .accountsPartial({
-          freezeAuthority: freezeAuthority.publicKey, // Correct authority
-          asset: accessTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          freezeAuthority: freezeAuthority.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .signers([freezeAuthority]) // Authorized signer
+        .signers([freezeAuthority])
         .rpc();
 
     } catch (error) {
       // Handle error
     }
-
   });
 
   it("Test Burn Protection - Verify Burn Plugin & Control", async () => {
     // Test burn protection functionality and access control
-    
-    // Generate separate authorities for this test
-    const burnAuthority = Keypair.generate();
+    const testBurnAuthority = Keypair.generate();
     const unauthorizedUser = Keypair.generate();
 
-    // Step 1: Mint asset with burn protection enabled
-    const burnTestAsset = Keypair.generate();
-    
-    const mintTx = await program.methods
-      .mintAsset(
-        freezeAuthority.publicKey, // freeze authority
-        burnAuthority.publicKey    // burn authority (important: separate authority)
-      )
-      .accountsPartial({
-        user: provider.publicKey,
-        mint: burnTestAsset.publicKey,
-        collection: collection.publicKey,
-        authority: authority[0],
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([burnTestAsset])
-      .rpc();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, testBurnAuthority.publicKey);
 
-    // Wait for transaction confirmation
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await waitForConfirmation();
 
-    // Step 2: Attempt burn with unauthorized user (should fail for security)
+    // Attempt burn with unauthorized user (should fail)
     try {
-      const unauthorizedBurnTx = await program.methods
+      await program.methods
         .burnAsset()
         .accountsPartial({
-          burnAuthority: unauthorizedUser.publicKey, // Wrong authority
-          asset: burnTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          burnAuthority: unauthorizedUser.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([unauthorizedUser])
         .rpc();
@@ -340,96 +276,65 @@ it("Request Airdrop", async () => {
       // Expected to fail - unauthorized burn properly rejected
     }
 
-    // Step 3: Burn with correct authority (should succeed)
+    // Burn with correct authority (should succeed)
     try {
-      const authorizedBurnTx = await program.methods
+      await program.methods
         .burnAsset()
         .accountsPartial({
-          burnAuthority: burnAuthority.publicKey,
-          asset: burnTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          burnAuthority: testBurnAuthority.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .signers([burnAuthority])
+        .signers([testBurnAuthority])
         .rpc();
 
-      // Step 4: Try to fetch the burned asset (should fail)
+      // Verify asset was burned by attempting to fetch it
       try {
-        const burnedAsset = await fetchAssetV1(umi, publicKey(burnTestAsset.publicKey.toBase58()));
+        await fetchAssetV1(umi, publicKey(assetKeypair.publicKey.toBase58()));
       } catch (error) {
-        // Asset successfully burned - no longer exists on chain
+        // Expected - asset no longer exists
       }
       
     } catch (error) {
       // Handle error
     }
-
   });
 
   it("Test Combined Access Controls", async () => {
-    // Generate authorities
+    // Test that freeze and burn authorities work independently
     const combinedFreezeAuth = Keypair.generate();
     const combinedBurnAuth = Keypair.generate();
     
-    // Mint asset with both protections
-    const combinedTestAsset = Keypair.generate();
-    
-    const mintTx = await program.methods
-      .mintAsset(
-        combinedFreezeAuth.publicKey, // freeze authority
-        combinedBurnAuth.publicKey    // burn authority
-      )
-      .accountsPartial({
-        user: provider.publicKey,
-        mint: combinedTestAsset.publicKey,
-        collection: collection.publicKey,
-        authority: authority[0],
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([combinedTestAsset])
-      .rpc();
+    const { assetKeypair } = await mintTestAsset(combinedFreezeAuth.publicKey, combinedBurnAuth.publicKey);
 
-    // Test that both authorities work independently
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await waitForConfirmation(2000);
 
     try {
       // Test freeze
-      const freezeTx = await program.methods
+      await program.methods
         .freezeAsset()
         .accountsPartial({
           freezeAuthority: combinedFreezeAuth.publicKey,
-          asset: combinedTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([combinedFreezeAuth])
         .rpc();
 
       // Test unfreeze
-      const unfreezeTx = await program.methods
+      await program.methods
         .unfreezeAsset()
         .accountsPartial({
           freezeAuthority: combinedFreezeAuth.publicKey,
-          asset: combinedTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([combinedFreezeAuth])
         .rpc();
 
       // Test burn (will destroy the asset)
-      const burnTx = await program.methods
+      await program.methods
         .burnAsset()
         .accountsPartial({
           burnAuthority: combinedBurnAuth.publicKey,
-          asset: combinedTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([combinedBurnAuth])
         .rpc();
@@ -437,95 +342,45 @@ it("Request Airdrop", async () => {
     } catch (error) {
       // Handle error
     }
-
   });
 
   it("Test Basic Transfer Functionality", async () => {
     // Test normal asset transfer between owners
-    
-    // Set up accounts for transfer testing
-    const originalOwner = provider.wallet; // Use provider wallet as original owner
-    const newOwner = Keypair.generate();   // Generate recipient
-    const transferTestAsset = Keypair.generate();
+    const newOwner = Keypair.generate();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, burnAuthority.publicKey);
 
-    // Step 1: Mint an asset that can be transferred
-    const mintTx = await program.methods
-      .mintAsset(
-        freezeAuthority.publicKey, // freeze authority
-        burnAuthority.publicKey    // burn authority
-      )
-      .accountsPartial({
-        user: originalOwner.publicKey,     // Original owner mints the asset
-        mint: transferTestAsset.publicKey,
-        collection: collection.publicKey,
-        authority: authority[0],
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([transferTestAsset])
-      .rpc();
+    await waitForConfirmation();
 
-    // Wait for confirmation before attempting transfer
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Step 2: Execute normal transfer (should succeed if asset is not frozen)
+    // Execute normal transfer (should succeed if asset is not frozen)
     try {
-      const transferTx = await program.methods
+      await program.methods
         .transferAsset()
         .accountsPartial({
-          currentOwner: originalOwner.publicKey, // Must be current owner
-          newOwner: newOwner.publicKey,          // Recipient
-          asset: transferTestAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          currentOwner: provider.publicKey,
+          newOwner: newOwner.publicKey,
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
-        .rpc(); // Provider wallet automatically signs
+        .rpc();
 
     } catch (error) {
       // Handle error
     }
-
   });
 
   it("Test Transfer with Freeze Protection", async () => {
     // Test that frozen assets cannot be transferred (security feature)
-    
-    // Generate accounts for comprehensive freeze+transfer testing
-    const owner1 = provider.wallet;
     const owner2 = Keypair.generate();
-    const owner3 = Keypair.generate();
-    const freezeTransferAsset = Keypair.generate();
+    const { assetKeypair } = await mintTestAsset(freezeAuthority.publicKey, burnAuthority.publicKey);
 
-    // Step 1: Mint asset for freeze+transfer interaction testing
-    const mintTx = await program.methods
-      .mintAsset(
-        freezeAuthority.publicKey, // freeze authority
-        burnAuthority.publicKey    // burn authority
-      )
-      .accountsPartial({
-        user: owner1.publicKey,
-        mint: freezeTransferAsset.publicKey,
-        collection: collection.publicKey,
-        authority: authority[0],
-        systemProgram: SYSTEM_PROGRAM_ID,
-        mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
-      })
-      .signers([freezeTransferAsset])
-      .rpc();
+    await waitForConfirmation(2000);
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Step 2: Freeze the asset to test transfer blocking
+    // Freeze the asset to test transfer blocking
     try {
-      const freezeTx = await program.methods
+      await program.methods
         .freezeAsset()
         .accountsPartial({
           freezeAuthority: freezeAuthority.publicKey,
-          asset: freezeTransferAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([freezeAuthority])
         .rpc();
@@ -534,19 +389,16 @@ it("Request Airdrop", async () => {
       // Handle error
     }
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await waitForConfirmation(2000);
 
-    // Step 3: Attempt transfer of frozen asset (should fail for security)
+    // Attempt transfer of frozen asset (should fail for security)
     try {
-      const blockedTransferTx = await program.methods
+      await program.methods
         .transferAsset()
         .accountsPartial({
-          currentOwner: owner1.publicKey,
+          currentOwner: provider.publicKey,
           newOwner: owner2.publicKey,
-          asset: freezeTransferAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .rpc();
 
@@ -554,16 +406,13 @@ it("Request Airdrop", async () => {
       // Expected to fail - frozen asset transfer properly blocked
     }
 
-    // Step 4: Unfreeze the asset to allow transfers again
+    // Unfreeze the asset to allow transfers again
     try {
-      const unfreezeTx = await program.methods
+      await program.methods
         .unfreezeAsset()
         .accountsPartial({
           freezeAuthority: freezeAuthority.publicKey,
-          asset: freezeTransferAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .signers([freezeAuthority])
         .rpc();
@@ -572,25 +421,21 @@ it("Request Airdrop", async () => {
       // Handle error
     }
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await waitForConfirmation(2000);
 
-    // Step 5: Transfer unfrozen asset (should now succeed)
+    // Transfer unfrozen asset (should now succeed)
     try {
-      const allowedTransferTx = await program.methods
+      await program.methods
         .transferAsset()
         .accountsPartial({
-          currentOwner: owner1.publicKey,
+          currentOwner: provider.publicKey,
           newOwner: owner2.publicKey,
-          asset: freezeTransferAsset.publicKey,
-          collection: collection.publicKey,
-          systemProgram: SYSTEM_PROGRAM_ID,
-          mplCoreProgram: new PublicKey(MPL_CORE_PROGRAM_ID),
+          ...getMetaplexAccounts(assetKeypair.publicKey),
         })
         .rpc();
 
     } catch (error) {
       // Handle error
     }
-
   });
 });
