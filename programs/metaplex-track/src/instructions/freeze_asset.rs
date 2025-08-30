@@ -4,26 +4,23 @@ use mpl_core::{
     types::{FreezeDelegate, Plugin},
 };
 
-// Account validation struct for asset freezing/unfreezing
 #[derive(Accounts)]
 pub struct FreezeAsset<'info> {
     #[account(mut)]
-    pub freeze_authority: Signer<'info>, // Authority that can freeze/unfreeze
-    /// CHECK: Asset to be frozen/unfrozen - validated by Metaplex Core
+    pub freeze_authority: Signer<'info>,
+    /// CHECK: Validated by Metaplex Core
     #[account(mut)]
-    pub asset: UncheckedAccount<'info>, // Target asset
-    /// CHECK: Collection account - optional, validated by Metaplex Core
-    pub collection: Option<UncheckedAccount<'info>>, // Parent collection (optional)
-    pub system_program: Program<'info, System>, // Required for plugin updates
-    /// CHECK: Metaplex Core program - verified by address constraint
+    pub asset: UncheckedAccount<'info>,
+    /// CHECK: Validated by Metaplex Core
+    pub collection: Option<UncheckedAccount<'info>>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Verified by address constraint
     #[account(address = mpl_core::ID)]
-    pub mpl_core_program: UncheckedAccount<'info>, // Metaplex Core program
+    pub mpl_core_program: UncheckedAccount<'info>,
 }
 
 impl<'info> FreezeAsset<'info> {
-    // Freezes an asset to prevent transfers
     pub fn freeze_asset(&mut self) -> Result<()> {
-        // Update freeze plugin to frozen state via Metaplex Core CPI
         UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(
@@ -32,19 +29,17 @@ impl<'info> FreezeAsset<'info> {
                     .map(|c| c.to_account_info())
                     .as_ref()
             )
-            .payer(&self.freeze_authority.to_account_info()) // Authority pays fees
-            .authority(Some(&self.freeze_authority.to_account_info())) // Must be freeze authority
+            .payer(&self.freeze_authority.to_account_info())
+            .authority(Some(&self.freeze_authority.to_account_info()))
             .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true })) // Set frozen = true
+            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
             .invoke()?;
         
-        msg!("Asset has been frozen"); // Log freeze action
+        msg!("Asset frozen");
         Ok(())
     }
 
-    // Unfreezes an asset to allow transfers
     pub fn unfreeze_asset(&mut self) -> Result<()> {
-        // Update freeze plugin to unfrozen state via Metaplex Core CPI
         UpdatePluginV1CpiBuilder::new(&self.mpl_core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(
@@ -53,13 +48,13 @@ impl<'info> FreezeAsset<'info> {
                     .map(|c| c.to_account_info())
                     .as_ref()
             )
-            .payer(&self.freeze_authority.to_account_info()) // Authority pays fees
-            .authority(Some(&self.freeze_authority.to_account_info())) // Must be freeze authority
+            .payer(&self.freeze_authority.to_account_info())
+            .authority(Some(&self.freeze_authority.to_account_info()))
             .system_program(&self.system_program.to_account_info())
-            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: false })) // Set frozen = false
+            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: false }))
             .invoke()?;
         
-        msg!("Asset has been unfrozen"); // Log unfreeze action
+        msg!("Asset unfrozen");
         Ok(())
     }
 }
